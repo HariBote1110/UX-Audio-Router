@@ -1,0 +1,193 @@
+/* css/style.css */
+
+/* --- 既存の定義（上部は変更なし） --- */
+:root {
+    --bg-body: #1a1a1a;
+    --bg-panel: #2a2a2a;
+    --bg-strip: #333333;
+    --accent-orange: #ff9500;
+    --accent-green: #4cd964;
+    --accent-red: #ff3b30;
+    --accent-blue: #0a84ff;
+    --text-main: #e0e0e0;
+    --text-dim: #888;
+}
+
+body {
+    font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-body);
+    color: var(--text-main);
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+}
+
+h1 { margin: 0 0 10px 0; font-size: 1.2rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px; }
+
+/* Status Bar */
+.status-bar {
+    font-size: 0.7rem;
+    color: #555;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background-color: #444; }
+.status-dot.connected { background-color: var(--accent-blue); box-shadow: 0 0 8px var(--accent-blue); }
+
+/* Mixer Console */
+.mixer-console {
+    display: flex;
+    gap: 12px;
+    background-color: var(--bg-panel);
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    border: 1px solid #444;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+/* Strip Base */
+.strip {
+    background-color: var(--bg-strip);
+    width: 130px;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 5px;
+    border: 1px solid #000;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.3);
+    position: relative;
+}
+
+.strip-header { font-size: 0.9rem; font-weight: bold; margin-bottom: 8px; text-align: center; width: 100%;}
+
+.strip.input-strip { border: 1px solid var(--accent-orange); }
+.strip.input-strip .strip-header { color: var(--accent-orange); }
+
+.strip.direct-strip { border: 1px solid var(--accent-blue); background: #222e3a; }
+.strip.direct-strip .strip-header { color: var(--accent-blue); }
+
+select {
+    width: 95%; background: #222; color: white; border: 1px solid #555;
+    font-size: 0.7rem; margin-bottom: 10px; border-radius: 3px;
+}
+
+/* Routing Buttons */
+.route-container {
+    display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; width: 100%; margin-bottom: 8px;
+}
+.route-btn {
+    font-size: 0.65rem; padding: 2px 6px; border: 1px solid #555; background: #2a2a2a; color: #888;
+    cursor: pointer; border-radius: 3px; flex: 1 0 40%; max-width: 45%;
+    transition: all 0.1s;
+}
+.strip.input-strip .route-btn.active {
+    background: var(--accent-orange); color: black; border-color: var(--accent-orange); font-weight: bold;
+}
+.strip.direct-strip .route-btn.active {
+    background: var(--accent-blue); color: white; border-color: var(--accent-blue); font-weight: bold;
+}
+
+/* EQ Section */
+.eq-section {
+    width: 90%; background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 5px;
+}
+.eq-label { font-size: 0.6rem; color: #aaa; text-align: center; margin-bottom: 2px;}
+.eq-control { display: flex; align-items: center; justify-content: space-between; font-size: 0.6rem; }
+.eq-slider { width: 70%; height: 4px; -webkit-appearance: none; background: #555; border-radius: 2px; outline: none; }
+.eq-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; background: #ddd; border-radius: 50%; cursor: pointer; }
+
+/* Fader & Meter Group */
+.fader-group {
+    flex-grow: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px; /* 少し間隔を広げる */
+    width: 100%;
+    margin: 5px 0;
+    background: #222;
+    border-radius: 4px;
+    padding: 10px 0;
+    border: 1px inset #111;
+    min-height: 150px;
+}
+
+/* --- Meter Styles (Updated for Voicemeeter Look) --- */
+.meter-container {
+    width: 12px;
+    height: 100%;
+    background: #080808; /* 背景をより黒く */
+    border-radius: 2px;
+    position: relative; /* 子要素の基準点 */
+    overflow: hidden;
+    border: 1px solid #444;
+}
+
+/* LEDセグメント用の縞模様 */
+.meter-container::after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 2px,
+        rgba(0,0,0,0.8) 2px, /* 黒線を少し透過させて馴染ませる */
+        rgba(0,0,0,0.8) 3px
+    );
+    pointer-events: none;
+    z-index: 2;
+}
+
+.meter-fill {
+    width: 100%;
+    height: 0%; /* JSで制御 */
+    position: absolute;
+    bottom: 0; /* 下から伸びるように */
+    left: 0;
+    z-index: 1;
+    background: linear-gradient(to top, 
+        #4cd964 0%, #4cd964 60%, 
+        #ff9500 60%, #ff9500 85%, 
+        #ff3b30 85%, #ff3b30 100%
+    );
+    transition: none; /* アニメーションはJSで行うためCSS遷移は切る */
+}
+
+/* Fader Input */
+input[type=range][orient=vertical] {
+    writing-mode: bt-lr; -webkit-appearance: slider-vertical; width: 20px; height: 100%; outline: none; background: transparent;
+}
+
+.db-display { font-family: monospace; font-size: 0.7rem; color: var(--accent-green); margin-top: 5px; }
+
+.btn-mute {
+    width: 80%; padding: 8px 0; background-color: #444; border: 1px solid #222;
+    color: #aaa; font-size: 0.8rem; font-weight: bold; cursor: pointer; border-radius: 4px; margin-top: 10px;
+}
+.btn-mute.active { background-color: var(--accent-red); color: white; border-color: #bd2c00; }
+
+.add-strip-btn {
+    width: 40px; background: transparent; border: 2px dashed #555; color: #555; font-size: 2rem;
+    cursor: pointer; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+}
+.add-strip-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+
+.delete-strip-btn {
+    position: absolute; top: 6px; right: 6px; width: 16px; height: 16px;
+    background: #444; color: #bbb; border: none; border-radius: 50%;
+    font-size: 10px; line-height: 16px; text-align: center; cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+}
+.delete-strip-btn:hover { background: var(--accent-red); color: white; }
