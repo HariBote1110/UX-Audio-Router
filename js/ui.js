@@ -5,230 +5,88 @@ const audio = require('./audio');
 
 class UI {
     constructor() {
-        // --- UI Elements Cache ---
-        // 頻繁にアクセスする要素はここで一度だけ取得
         this.el = {
-            inputSelect: document.getElementById('inputDeviceSelect'),
-            startBtn: document.getElementById('startBtn'),
-            addBtn: document.getElementById('addStripBtn'),
+            // Main Containers
+            inputsContainer: document.getElementById('inputStripsContainer'),
+            directContainer: document.getElementById('directStripContainer'),
             outputsContainer: document.getElementById('outputStripsContainer'),
+            
+            // Global Buttons
+            startBtn: document.getElementById('startBtn'),
+            addInputBtn: document.getElementById('addInputBtn'),
+            addOutputBtn: document.getElementById('addOutputBtn'),
+            
+            // Status
             statusDot: document.getElementById('uxMusicStatusDot'),
             statusText: document.getElementById('uxMusicStatusText'),
-            hwRoute: document.getElementById('hardwareRouteContainer'),
+            
+            // Direct Strip Elements (Static)
             dirRoute: document.getElementById('directRouteContainer'),
-            inputFader: document.getElementById('inputGainFader'),
-            inputDb: document.getElementById('inputDbDisplay'),
-            hwMeter: document.getElementById('hardwareMeter'),
             dirFader: document.getElementById('directGainFader'),
             dirDb: document.getElementById('directDbDisplay'),
             dirMute: document.getElementById('directMuteBtn'),
             dirMeter: document.getElementById('directMeter')
         };
 
-        // --- Meter System ---
-        // メーター更新対象のリスト (オブジェクト: { analyser, element, currentLevel })
-        // これによりID検索を毎フレーム行う無駄を排除
-        this.activeMeters = []; 
-        
-        // 最後に更新した時間
+        this.meterValues = new Map();
         this.lastTime = performance.now();
+        this.fftData = new Uint8Array(2048);
         
-        // 分析用バッファ (FFTサイズ2048に対応)
-        this.fftData = new Uint8Array(2048); 
+        this.inputDevices = [];
+        this.outputDevices = [];
     }
 
-    init() {
-        this.setupListeners();
-        this.refreshDeviceList();
-        this.loadValuesFromStore();
-        this.renderAllRoutingButtons();
+    async init() {
+        this.setupGlobalListeners();
         
-        // 初期ストリップの描画
-        store.data.outputs.forEach(out => this.renderOutputStrip(out));
+        await this.refreshDeviceList(); 
+        
+        store.load(); 
+        
+        // Inputs
+        store.data.inputs.forEach(inData => this.renderInputStrip(inData));
+        
+        // Direct Strip
+        if (this.el.dirFader) this.el.dirFader.value = store.data.directGain;
+        if (this.el.dirDb) this.updateDb(this.el.dirDb, store.data.directGain);
+        if (this.el.dirMute) this.updateMuteBtn(this.el.dirMute, store.data.directMuted);
+        if (this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
 
-        // メーターリストの初期構築
-        this.rebuildMeterList();
+        // Outputs
+        store.data.outputs.forEach(outData => this.renderOutputStrip(outData));
 
         store.on('routing-changed', () => {
-            this.renderAllRoutingButtons();
+            store.data.inputs.forEach(i => {
+                const container = document.getElementById(`input-${i.id}-route`);
+                if(container) this.renderRoutingContainer(container, 'hardware', i.id);
+            });
+            if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
+            
             audio.updateAllGains();
         });
 
-        // アニメーションループ開始
         this.startMeterLoop();
     }
 
-    // --- Meter Logic (Core Fix) ---
-
-    // メーター対象リストを再構築する（ストリップ追加・削除時や起動時に呼ぶ）
-    rebuildMeterList() {
-        this.activeMeters = [];
-
-        // 1. Hardware Input
-        if (this.el.hwMeter) {
-            this.activeMeters.push({
-                type: 'hardware',
-                element: this.el.hwMeter,
-                currentLevel: 0
-            });
-        }
-
-        // 2. Direct Input
-        if (this.el.dirMeter) {
-            this.activeMeters.push({
-                type: 'direct',
-                element: this.el.dirMeter,
-                currentLevel: 0
-            });
-        }
-
-        // 3. Output Strips
-        store.data.outputs.forEach(outData => {
-            const el = document.getElementById(`strip-${outData.id}-meter`);
-            if (el) {
-                this.activeMeters.push({
-                    type: 'output',
-                    id: outData.id,
-                    element: el,
-                    currentLevel: 0
-                });
-            }
-        });
-    }
-
-    startMeterLoop() {
-        const loop = (timestamp) => {
-            // デルタタイム計算 (秒単位)
-            let dt = (timestamp - this.lastTime) / 1000;
-            this.lastTime = timestamp;
-
-            // タブ切り替え復帰時などの巨大なdtを無視
-            if (dt > 0.1) dt = 0.016; 
-
-            // エンジンが動いていない場合は全メーターを減衰させて終了
-            if (!audio.isRunning) {
-                this.decayAllMeters(dt);
-                requestAnimationFrame(loop);
-                return;
-            }
-
-            // 全メーターの一括更新
-            this.activeMeters.forEach(meter => {
-                let analyser = null;
-
-                // アナライザーの参照解決
-                if (meter.type === 'hardware') analyser = audio.hardwareAnalyser;
-                else if (meter.type === 'direct') analyser = audio.directAnalyser;
-                else if (meter.type === 'output') {
-                    const nodes = audio.strips.get(meter.id);
-                    if (nodes) analyser = nodes.analyser;
-                }
-
-                if (analyser) {
-                    this.updateSingleMeter(analyser, meter, dt);
-                } else {
-                    // アナライザーがない場合は減衰のみ
-                    this.decaySingleMeter(meter, dt);
-                }
-            });
-
-            requestAnimationFrame(loop);
-        };
-        requestAnimationFrame(loop);
-    }
-
-    updateSingleMeter(analyser, meterObj, dt) {
-        // 1. 音量(RMS)の取得
-        analyser.getByteTimeDomainData(this.fftData);
-        
-        let sum = 0;
-        const len = analyser.frequencyBinCount;
-        for (let i = 0; i < len; i++) {
-            const v = (this.fftData[i] - 128) / 128.0;
-            sum += v * v;
-        }
-        const rms = Math.sqrt(sum / len);
-        
-        // 2. dB -> % 変換 (-60dB ~ 0dB)
-        const db = 20 * Math.log10(rms);
-        let target = (db + 60) / 60 * 100;
-        
-        // クランプ & ノイズゲート
-        if (target < 0) target = 0;
-        if (target > 100) target = 100;
-        if (target < 1.0) target = 0; // 微小ノイズカット
-
-        // 3. ピークホールド & ディケイ (Peak Hold & Decay)
-        // ここがガタつき防止の肝です。
-        // 「入力が今より大きければ即座に上がる」
-        // 「入力が今より小さければ、一定速度で下がる（一瞬で0には戻さない）」
-        
-        if (target > meterObj.currentLevel) {
-            // Attack: 即座に反映 (必要なら少しLerpを入れても良いが、即時の方がキビキビ動く)
-            // 少しだけ平均化してジッターを抑えるなら: 
-            meterObj.currentLevel += (target - meterObj.currentLevel) * 0.5; 
-        } else {
-            // Decay: 定速減衰
-            // 1秒間に減る量 (例: 60% / sec) -> 残光感の調整はここ
-            const decaySpeed = 60.0; 
-            meterObj.currentLevel -= decaySpeed * dt;
-        }
-
-        // 範囲チェック
-        if (meterObj.currentLevel < 0) meterObj.currentLevel = 0;
-        if (meterObj.currentLevel > 100) meterObj.currentLevel = 100;
-
-        // 4. DOM反映 (キャッシュしたelementを直接操作)
-        meterObj.element.style.height = `${meterObj.currentLevel}%`;
-    }
-
-    decayAllMeters(dt) {
-        this.activeMeters.forEach(m => this.decaySingleMeter(m, dt));
-    }
-
-    decaySingleMeter(meterObj, dt) {
-        if (meterObj.currentLevel > 0) {
-            const decaySpeed = 60.0; 
-            meterObj.currentLevel -= decaySpeed * dt;
-            if (meterObj.currentLevel < 0) meterObj.currentLevel = 0;
-            meterObj.element.style.height = `${meterObj.currentLevel}%`;
-        }
-    }
-
-    // --- Standard UI Logic ---
-
-    setupListeners() {
-        this.el.inputFader.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            store.data.hardwareGain = val;
-            this.updateDb(this.el.inputDb, val);
-            audio.updateAllGains();
-        });
-        this.el.inputFader.addEventListener('change', () => store.save());
-
-        this.el.inputSelect.addEventListener('change', () => {
-            store.data.inputDeviceId = this.el.inputSelect.value;
-            store.save();
-            audio.stop();
-            audio.start();
-        });
-
-        this.el.dirFader.addEventListener('input', (e) => {
+    setupGlobalListeners() {
+        // Direct Strip Listeners
+        this.el.dirFader?.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             store.data.directGain = val;
             this.updateDb(this.el.dirDb, val);
             audio.updateAllGains();
         });
-        this.el.dirFader.addEventListener('change', () => store.save());
+        this.el.dirFader?.addEventListener('change', () => store.save());
 
-        this.el.dirMute.addEventListener('click', () => {
+        this.el.dirMute?.addEventListener('click', () => {
             store.data.directMuted = !store.data.directMuted;
             this.updateMuteBtn(this.el.dirMute, store.data.directMuted);
             audio.updateAllGains();
             store.save();
         });
 
-        this.el.startBtn.addEventListener('click', () => {
+        // Global Buttons
+        this.el.startBtn?.addEventListener('click', () => {
             if (audio.isRunning) {
                 audio.stop();
                 this.updateStartBtn(false);
@@ -238,7 +96,8 @@ class UI {
             }
         });
 
-        this.el.addBtn.addEventListener('click', () => this.addNewOutput());
+        this.el.addInputBtn?.addEventListener('click', () => this.addNewInput());
+        this.el.addOutputBtn?.addEventListener('click', () => this.addNewOutput());
         
         navigator.mediaDevices.ondevicechange = () => this.refreshDeviceList();
 
@@ -250,51 +109,122 @@ class UI {
              
              this.el.outputsContainer.innerHTML = '';
              store.data.outputs.forEach(o => this.renderOutputStrip(o));
-             this.rebuildMeterList(); // DOM再生成後はリスト再構築必須
-             
              store.data.outputs.forEach(o => audio.updateStripParams(o.id));
+             
              ipcRenderer.send('mute-status-changed', muteAll);
         });
     }
 
-    loadValuesFromStore() {
-        this.el.inputFader.value = store.data.hardwareGain;
-        this.updateDb(this.el.inputDb, store.data.hardwareGain);
-        this.el.dirFader.value = store.data.directGain;
-        this.updateDb(this.el.dirDb, store.data.directGain);
-        this.updateMuteBtn(this.el.dirMute, store.data.directMuted);
+    // --- Input Management ---
+    addNewInput() {
+        const id = store.addInput();
+        const newData = store.data.inputs.find(i => i.id === id);
+        this.renderInputStrip(newData);
+        
+        if (audio.isRunning) {
+            audio.stop();
+            audio.start();
+            this.updateStartBtn(true);
+        }
     }
 
-    addNewOutput() {
-        const id = store.outputIdCounter++;
-        const newOutput = {
-            id: id,
-            selectedDeviceId: '',
-            volume: 1.0,
-            isMuted: false,
-            eqValues: { high: 0, mid: 0, low: 0 }
+    removeInput(id) {
+        if (!confirm('Remove input?')) return;
+        const el = document.getElementById(`input-strip-${id}`);
+        if (el) el.remove();
+        this.meterValues.delete(`input-${id}-meter`);
+        
+        store.removeInput(id);
+        
+        if (audio.isRunning) {
+            audio.stop();
+            audio.start();
+            this.updateStartBtn(true);
+        }
+    }
+
+    renderInputStrip(data) {
+        const div = document.createElement('div');
+        div.className = 'strip input-strip';
+        div.id = `input-strip-${data.id}`;
+        div.innerHTML = `
+            <div class="strip-header">IN ${data.id}</div>
+            <button class="delete-strip-btn">×</button>
+            <select class="device-select"></select>
+            
+            <div class="route-container" id="input-${data.id}-route"></div>
+
+            <div class="fader-group">
+                <div class="meter-container"><div class="meter-fill" id="input-${data.id}-meter"></div></div>
+                <input type="range" class="fader-main" orient="vertical" min="0" max="1.5" step="0.01" value="${data.volume}">
+            </div>
+            <div class="db-display">0.0dB</div>
+        `;
+
+        const sel = div.querySelector('.device-select');
+        const routeCont = div.querySelector('.route-container');
+        const fader = div.querySelector('.fader-main');
+        const dbDisp = div.querySelector('.db-display');
+        const delBtn = div.querySelector('.delete-strip-btn');
+
+        this.updateDb(dbDisp, data.volume);
+        this.populateInputDeviceSelect(sel, data.deviceId);
+        this.renderRoutingContainer(routeCont, 'hardware', data.id);
+
+        delBtn.onclick = () => this.removeInput(data.id);
+
+        sel.onchange = () => {
+            data.deviceId = sel.value;
+            store.save();
+            if (audio.isRunning) {
+                audio.stop();
+                audio.start();
+            }
         };
+
+        fader.oninput = (e) => {
+            data.volume = parseFloat(e.target.value);
+            this.updateDb(dbDisp, data.volume);
+            audio.updateAllGains();
+        };
+        fader.onchange = () => store.save();
+
+        this.el.inputsContainer.appendChild(div);
+    }
+
+    // --- Output Management ---
+    addNewOutput() {
+        const id = store.addOutput();
+        const newData = store.data.outputs.find(o => o.id === id);
         
-        store.addOutput(newOutput);
-        store.hardwareRoutingSet.add(id);
-        store.directRoutingSet.add(id);
-        store.save();
+        store.data.inputs.forEach(inp => store.toggleRouting('hardware', inp.id, id));
+        store.toggleRouting('direct', null, id);
         
-        this.renderOutputStrip(newOutput);
-        this.rebuildMeterList(); // リスト更新
-        this.renderAllRoutingButtons();
-        if (audio.isRunning) audio.createStripContext(newOutput);
+        this.renderOutputStrip(newData);
+        
+        store.data.inputs.forEach(i => {
+            const c = document.getElementById(`input-${i.id}-route`);
+            if(c) this.renderRoutingContainer(c, 'hardware', i.id);
+        });
+        if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
+
+        if (audio.isRunning) audio.createStripContext(newData);
     }
 
     removeOutput(id) {
         if (!confirm('Remove output?')) return;
         const el = document.getElementById(`strip-${id}`);
         if (el) el.remove();
-        
+        this.meterValues.delete(`strip-${id}-meter`);
+
         audio.removeStripContext(id);
         store.removeOutput(id);
-        this.renderAllRoutingButtons();
-        this.rebuildMeterList(); // リスト更新
+        
+        store.data.inputs.forEach(i => {
+            const c = document.getElementById(`input-${i.id}-route`);
+            if(c) this.renderRoutingContainer(c, 'hardware', i.id);
+        });
+        if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
     }
 
     renderOutputStrip(data) {
@@ -328,7 +258,7 @@ class UI {
 
         this.updateDb(dbDisp, data.volume);
         this.updateMuteBtn(muteBtn, data.isMuted);
-        this.populateDeviceSelect(sel, data.selectedDeviceId);
+        this.populateOutputDeviceSelect(sel, data.selectedDeviceId);
 
         delBtn.onclick = () => this.removeOutput(data.id);
         
@@ -358,40 +288,53 @@ class UI {
             slider.onchange = () => store.save();
         });
 
-        this.elOutputsContainer.appendChild(div);
+        this.el.outputsContainer.appendChild(div);
     }
 
+    // --- Helpers ---
     async refreshDeviceList() {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const inputs = devices.filter(d => d.kind === 'audioinput');
-        const outputs = devices.filter(d => d.kind === 'audiooutput');
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            this.inputDevices = devices.filter(d => d.kind === 'audioinput');
+            this.outputDevices = devices.filter(d => d.kind === 'audiooutput');
 
-        this.elInputSelect.innerHTML = '';
-        inputs.forEach(d => {
+            const inputSelects = document.querySelectorAll('.input-strip .device-select');
+            inputSelects.forEach(sel => {
+                const stripId = parseInt(sel.closest('.strip').id.replace('input-strip-', ''));
+                const data = store.data.inputs.find(i => i.id === stripId);
+                this.populateInputDeviceSelect(sel, data ? data.deviceId : '');
+            });
+
+            const outputSelects = document.querySelectorAll('#outputStripsContainer .device-select');
+            outputSelects.forEach(sel => {
+                const stripId = parseInt(sel.closest('.strip').id.replace('strip-', ''));
+                const data = store.data.outputs.find(o => o.id === stripId);
+                this.populateOutputDeviceSelect(sel, data ? data.selectedDeviceId : '');
+            });
+        } catch (e) {
+            console.error("Device refresh failed:", e);
+        }
+    }
+
+    populateInputDeviceSelect(select, currentVal) {
+        if (!select) return;
+        select.innerHTML = '';
+        this.inputDevices.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d.deviceId;
             opt.text = d.label || `Input ${d.deviceId.slice(0,4)}`;
             if (d.label.includes('BlackHole')) opt.selected = true;
-            this.elInputSelect.appendChild(opt);
+            select.appendChild(opt);
         });
-        if (store.data.inputDeviceId && inputs.some(d => d.deviceId === store.data.inputDeviceId)) {
-            this.elInputSelect.value = store.data.inputDeviceId;
+        if (currentVal && this.inputDevices.some(d => d.deviceId === currentVal)) {
+            select.value = currentVal;
         }
-
-        store.data.outputs.forEach(outData => {
-            const el = document.getElementById(`strip-${outData.id}`);
-            if (el) {
-                const sel = el.querySelector('.device-select');
-                this.populateDeviceSelect(sel, outData.selectedDeviceId, outputs);
-            }
-        });
-        this.cachedOutputDevices = outputs;
     }
 
-    populateDeviceSelect(select, currentVal, deviceList = null) {
-        const devices = deviceList || this.cachedOutputDevices || [];
+    populateOutputDeviceSelect(select, currentVal) {
+        if (!select) return;
         select.innerHTML = '<option value="">Select Device...</option>';
-        devices.forEach(d => {
+        this.outputDevices.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d.deviceId;
             opt.text = d.label || `Output ${d.deviceId.slice(0,4)}`;
@@ -400,48 +343,132 @@ class UI {
         if (currentVal) select.value = currentVal;
     }
 
-    renderAllRoutingButtons() {
-        this.renderRoutingContainer(this.elHwRoute, store.hardwareRoutingSet, 'hardware');
-        this.renderRoutingContainer(this.elDirRoute, store.directRoutingSet, 'direct');
-    }
-
-    renderRoutingContainer(container, set, type) {
+    renderRoutingContainer(container, type, inputId) {
+        if (!container) return;
         container.innerHTML = '';
         store.data.outputs.forEach(out => {
             const btn = document.createElement('div');
-            btn.className = `route-btn ${set.has(out.id) ? 'active' : ''}`;
+            const isRouted = store.isRouted(type, inputId, out.id);
+            btn.className = `route-btn ${isRouted ? 'active' : ''}`;
             btn.textContent = `A${out.id}`;
-            btn.onclick = () => store.toggleRouting(type, out.id);
+            btn.onclick = () => {
+                store.toggleRouting(type, inputId, out.id);
+            };
             container.appendChild(btn);
         });
     }
 
     updateDb(el, val) {
+        if (!el) return;
         const db = val === 0 ? -Infinity : 20 * Math.log10(val);
         el.textContent = (db === -Infinity ? "-Inf" : db.toFixed(1)) + "dB";
     }
 
     updateMuteBtn(el, isMuted) {
+        if (!el) return;
         el.classList.toggle('active', isMuted);
         el.textContent = isMuted ? "MUTED" : "Mute";
     }
 
     updateStartBtn(isActive) {
-        this.elStartBtn.textContent = isActive ? "ACTIVE" : "ON";
-        this.elStartBtn.style.backgroundColor = isActive ? "var(--accent-orange)" : "var(--accent-green)";
-        this.elInputSelect.disabled = isActive;
+        if (!this.el.startBtn) return;
+        this.el.startBtn.textContent = isActive ? "ACTIVE" : "ON";
+        this.el.startBtn.style.backgroundColor = isActive ? "var(--accent-orange)" : "var(--accent-green)";
     }
 
+    // ★前回抜け落ちていたメソッドを復活させました★
     updateStatusDot(connected, rate) {
+        if (!this.el.statusDot || !this.el.statusText) return;
         if (connected) {
-            this.elStatusDot.classList.add('connected');
-            this.elStatusText.textContent = `UX Music: Connected (${rate}Hz)`;
-            this.elStatusText.style.color = "var(--accent-blue)";
+            this.el.statusDot.classList.add('connected');
+            this.el.statusText.textContent = `UX Music: Connected (${rate}Hz)`;
+            this.el.statusText.style.color = "var(--accent-blue)";
         } else {
-            this.elStatusDot.classList.remove('connected');
-            this.elStatusText.textContent = "UX Music: Disconnected";
-            this.elStatusText.style.color = "#555";
+            this.el.statusDot.classList.remove('connected');
+            this.el.statusText.textContent = "UX Music: Disconnected";
+            this.el.statusText.style.color = "#555";
         }
+    }
+
+    // --- Visualization Loop ---
+    startMeterLoop() {
+        const loop = (timestamp) => {
+            let dt = (timestamp - this.lastTime) / 1000;
+            this.lastTime = timestamp;
+            if (dt > 0.1) dt = 0.1;
+
+            if (audio.isRunning) {
+                // Hardware Inputs
+                store.data.inputs.forEach(input => {
+                    const hw = audio.hardwareInputs.get(input.id);
+                    const el = document.getElementById(`input-${input.id}-meter`);
+                    if (hw && hw.analyser && el) this.updateMeter(hw.analyser, el, dt);
+                    else if (el) this.updateMeter(null, el, dt);
+                });
+
+                // Direct Meter
+                this.updateMeter(audio.directAnalyser, this.el.dirMeter, dt);
+
+                // Output Meters
+                store.data.outputs.forEach(outData => {
+                    const nodes = audio.strips.get(outData.id);
+                    const el = document.getElementById(`strip-${outData.id}-meter`);
+                    if (nodes && nodes.analyser) this.updateMeter(nodes.analyser, el, dt);
+                    else this.updateMeter(null, el, dt);
+                });
+            } else {
+                // Decay all
+                store.data.inputs.forEach(i => {
+                    const el = document.getElementById(`input-${i.id}-meter`);
+                    this.updateMeter(null, el, dt);
+                });
+                this.updateMeter(null, this.el.dirMeter, dt);
+                store.data.outputs.forEach(outData => {
+                    const el = document.getElementById(`strip-${outData.id}-meter`);
+                    this.updateMeter(null, el, dt);
+                });
+            }
+            requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+    }
+
+    updateMeter(analyser, element, dt) {
+        if (!element) return;
+        let targetPercent = 0;
+
+        if (analyser) {
+            analyser.getByteTimeDomainData(this.fftData);
+            let sum = 0;
+            const len = analyser.frequencyBinCount;
+            for (let i = 0; i < len; i++) {
+                const v = (this.fftData[i] - 128) / 128.0;
+                sum += v * v;
+            }
+            const rms = Math.sqrt(sum / len);
+            const db = 20 * Math.log10(rms);
+            targetPercent = (db + 60) / 60 * 100;
+            if (targetPercent < 0) targetPercent = 0;
+            if (targetPercent > 100) targetPercent = 100;
+            if (targetPercent < 5.0) targetPercent = 0; 
+        }
+
+        const id = element.id;
+        let current = this.meterValues.get(id) || 0;
+
+        if (targetPercent > current) {
+            const attackSpeed = 15.0; 
+            current += (targetPercent - current) * attackSpeed * dt;
+        } else {
+            const decayRate = 80.0; 
+            current -= decayRate * dt;
+        }
+
+        if (current < 0) current = 0;
+        if (current > 100) current = 100;
+
+        this.meterValues.set(id, current);
+        element.style.height = `${current}%`;
     }
 }
 

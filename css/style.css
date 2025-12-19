@@ -1,6 +1,5 @@
 /* css/style.css */
 
-/* --- 既存の定義（上部は変更なし） --- */
 :root {
     --bg-body: #1a1a1a;
     --bg-panel: #2a2a2a;
@@ -44,6 +43,7 @@ h1 { margin: 0 0 10px 0; font-size: 1.2rem; color: var(--text-dim); text-transfo
 /* Mixer Console */
 .mixer-console {
     display: flex;
+    align-items: flex-start; /* 縦位置合わせ */
     gap: 12px;
     background-color: var(--bg-panel);
     padding: 20px;
@@ -52,12 +52,20 @@ h1 { margin: 0 0 10px 0; font-size: 1.2rem; color: var(--text-dim); text-transfo
     border: 1px solid #444;
     max-height: 90vh;
     overflow-y: auto;
+    overflow-x: auto; /* 横スクロール対応 */
+}
+
+/* Container for dynamic strips */
+#inputStripsContainer, #outputStripsContainer {
+    display: flex;
+    gap: 12px;
 }
 
 /* Strip Base */
 .strip {
     background-color: var(--bg-strip);
     width: 130px;
+    min-width: 130px; /* 潰れないように固定 */
     border-radius: 4px;
     display: flex;
     flex-direction: column;
@@ -113,7 +121,7 @@ select {
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 12px; /* 少し間隔を広げる */
+    gap: 12px;
     width: 100%;
     margin: 5px 0;
     background: #222;
@@ -123,18 +131,17 @@ select {
     min-height: 150px;
 }
 
-/* --- Meter Styles (Updated for Voicemeeter Look) --- */
+/* Meter Styles */
 .meter-container {
     width: 12px;
     height: 100%;
-    background: #080808; /* 背景をより黒く */
+    background: #000;
     border-radius: 2px;
-    position: relative; /* 子要素の基準点 */
+    position: relative;
     overflow: hidden;
     border: 1px solid #444;
 }
 
-/* LEDセグメント用の縞模様 */
 .meter-container::after {
     content: "";
     position: absolute;
@@ -142,9 +149,9 @@ select {
     background: repeating-linear-gradient(
         to bottom,
         transparent 0px,
-        transparent 2px,
-        rgba(0,0,0,0.8) 2px, /* 黒線を少し透過させて馴染ませる */
-        rgba(0,0,0,0.8) 3px
+        transparent 3px,
+        #000 3px,
+        #000 4px
     );
     pointer-events: none;
     z-index: 2;
@@ -152,9 +159,9 @@ select {
 
 .meter-fill {
     width: 100%;
-    height: 0%; /* JSで制御 */
+    height: 0%;
     position: absolute;
-    bottom: 0; /* 下から伸びるように */
+    bottom: 0;
     left: 0;
     z-index: 1;
     background: linear-gradient(to top, 
@@ -162,10 +169,9 @@ select {
         #ff9500 60%, #ff9500 85%, 
         #ff3b30 85%, #ff3b30 100%
     );
-    transition: none; /* アニメーションはJSで行うためCSS遷移は切る */
+    transition: none; 
 }
 
-/* Fader Input */
 input[type=range][orient=vertical] {
     writing-mode: bt-lr; -webkit-appearance: slider-vertical; width: 20px; height: 100%; outline: none; background: transparent;
 }
