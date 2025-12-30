@@ -2,85 +2,127 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electr
 const path = require('path');
 
 let mainWindow;
-let tray = null;
-
-// 簡易的なアイコンをBase64で作成（画像ファイル不要で動くようにするため）
-// 実際の開発では path.join(__dirname, 'icon.png') などを使用してください
-const iconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAADNGUExURQAAAP///wAAAP///wAAAP///wAAAP///wAAAP///wAAAP///wAAAP///wAAAP///wAAAP///wAAAAx0UlUAAAABdFJOUwBA5thmAAAATElEQVQ4y2MwDHgA4gFhIPYFYn9GBgYJIGaCYiA2BWIjIA6Esr2B2AmI08F6vIDYCYqD0Wyg2lA0G8BmQzAbwGYD2GwIZgPYbCAbAAA4wA3p22M2fwAAAABJRU5ErkJggg==';
-const trayIcon = nativeImage.createFromDataURL(`data:image/png;base64,${iconBase64}`);
+let tray;
+let isQuitting = false;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 600, // EQ追加のため少し幅を広げました
-        height: 700,
-        title: "UX Audio Router",
+        width: 800,
+        height: 600,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
-            backgroundThrottling: false // 背景でもオーディオを処理し続ける
-        }
+            // ループは手動で止めるので、OSによる強制停止は防ぐ（音切れ防止）
+            backgroundThrottling: false 
+        },
+        icon: path.join(__dirname, 'icon.png')
     });
 
     mainWindow.loadFile('index.html');
 
-    // ウィンドウが閉じられるとき、アプリを終了せず隠すだけにする（Macらしい挙動）
+    // --- 閉じるボタン（×）の挙動 ---
     mainWindow.on('close', (event) => {
-        if (!app.isQuitting) {
-            event.preventDefault();
-            mainWindow.hide();
+        if (!isQuitting) {
+            event.preventDefault(); // アプリ終了をキャンセル
+
+            // 1. レンダラーのループを止める命令を送る
+            mainWindow.webContents.send('window-hide');
+            
+            // 2. 少し待ってから隠す（メッセージが届くのを確実にするため）
+            // ※即座に隠すとレンダラーが停止処理をする前にサスペンドされることがあるため
+            setTimeout(() => {
+                mainWindow.hide();
+                // 3. macOSならDockからも消す
+                if (process.platform === 'darwin') {
+                    app.dock.hide();
+                }
+            }, 50);
         }
         return false;
+    });
+
+    // --- 表示された時の挙動 ---
+    mainWindow.on('show', () => {
+        // macOSならDockを表示に戻す
+        if (process.platform === 'darwin') {
+            app.dock.show();
+        }
+        mainWindow.webContents.send('window-show');
     });
 }
 
 function createTray() {
+    const iconPath = path.join(__dirname, 'icon.png');
+    let trayIcon = nativeImage.createFromPath(iconPath);
+    trayIcon = trayIcon.resize({ width: 20, height: 20 });
+    
+    if (process.platform === 'darwin') {
+        trayIcon.setTemplateImage(true);
+    }
+    
     tray = new Tray(trayIcon);
     tray.setToolTip('UX Audio Router');
-    updateTrayMenu(false); // 初期メニュー
-}
 
-function updateTrayMenu(isMuted) {
     const contextMenu = Menu.buildFromTemplate([
-        { label: 'UX Audio Router', enabled: false },
-        { type: 'separator' },
-        { 
-            label: isMuted ? 'Unmute All' : 'Mute All', 
-            click: () => {
-                // レンダラープロセス（画面側）に指令を送る
-                if (mainWindow) mainWindow.webContents.send('toggle-global-mute');
-            }
-        },
-        { type: 'separator' },
         { 
             label: 'Show Window', 
-            click: () => mainWindow.show() 
+            click: () => showWindow()
         },
+        { type: 'separator' },
         { 
             label: 'Quit', 
             click: () => {
-                app.isQuitting = true;
+                isQuitting = true;
                 app.quit();
             } 
         }
     ]);
     tray.setContextMenu(contextMenu);
+
+    // トレイアイコンクリック時の挙動
+    tray.on('click', () => {
+        if (mainWindow.isVisible()) {
+            // 隠す処理 (closeイベントと同じフローを通すため close() を呼ぶ)
+            mainWindow.close(); 
+        } else {
+            showWindow();
+        }
+    });
 }
 
-app.whenReady().then(() => {
-    createWindow();
-    createTray();
+// ウィンドウを表示する共通関数
+function showWindow() {
+    if (process.platform === 'darwin') {
+        app.dock.show().then(() => {
+            mainWindow.show();
+        });
+    } else {
+        mainWindow.show();
+    }
+    // ループ再開命令
+    mainWindow.webContents.send('window-show');
+}
 
-    app.on('activate', function () {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-        else mainWindow.show();
+// 多重起動防止
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+    app.quit();
+} else {
+    app.on('second-instance', () => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            showWindow();
+            mainWindow.focus();
+        }
     });
-});
 
-// IPC受信: 画面側でミュート状態が変わったらトレイの表示も更新する
-ipcMain.on('mute-status-changed', (event, isAllMuted) => {
-    updateTrayMenu(isAllMuted);
-});
+    app.whenReady().then(() => {
+        createWindow();
+        createTray();
+    });
+}
 
-app.on('before-quit', () => {
-    app.isQuitting = true;
+app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else showWindow();
 });

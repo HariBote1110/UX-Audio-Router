@@ -37,6 +37,11 @@
             <div class="db-display" id="directDbDisplay">0.0dB</div>
 
             <button id="directMuteBtn" class="btn-mute">Mute</button>
+            
+            <div style="margin-top:8px; width:100%; text-align:center;">
+                <div style="font-size:0.6rem; color:#888;">Buffer: <span id="directBufferVal">0.10</span>s</div>
+                <input type="range" id="directBufferSlider" min="0.01" max="0.5" step="0.01" value="0.10" style="width:90%; height:4px; margin-top:2px;">
+            </div>
         </div>
 
         <div style="width:1px; background:#444; margin:0 10px;"></div>

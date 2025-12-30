@@ -6,53 +6,50 @@ const audio = require('./audio');
 class UI {
     constructor() {
         this.el = {
-            // Main Containers
             inputsContainer: document.getElementById('inputStripsContainer'),
             directContainer: document.getElementById('directStripContainer'),
             outputsContainer: document.getElementById('outputStripsContainer'),
-            
-            // Global Buttons
             startBtn: document.getElementById('startBtn'),
             addInputBtn: document.getElementById('addInputBtn'),
             addOutputBtn: document.getElementById('addOutputBtn'),
-            
-            // Status
             statusDot: document.getElementById('uxMusicStatusDot'),
             statusText: document.getElementById('uxMusicStatusText'),
-            
-            // Direct Strip Elements (Static)
             dirRoute: document.getElementById('directRouteContainer'),
             dirFader: document.getElementById('directGainFader'),
             dirDb: document.getElementById('directDbDisplay'),
             dirMute: document.getElementById('directMuteBtn'),
-            dirMeter: document.getElementById('directMeter')
+            dirMeter: document.getElementById('directMeter'),
+            dirBufferSlider: document.getElementById('directBufferSlider'),
+            dirBufferVal: document.getElementById('directBufferVal')
         };
 
         this.meterValues = new Map();
         this.lastTime = performance.now();
         this.fftData = new Uint8Array(2048);
-        
         this.inputDevices = [];
         this.outputDevices = [];
+        
+        // ★追加: ウィンドウ表示状態フラグ
+        this.isVisible = true;
     }
 
     async init() {
         this.setupGlobalListeners();
-        
         await this.refreshDeviceList(); 
-        
         store.load(); 
         
-        // Inputs
         store.data.inputs.forEach(inData => this.renderInputStrip(inData));
         
-        // Direct Strip
         if (this.el.dirFader) this.el.dirFader.value = store.data.directGain;
         if (this.el.dirDb) this.updateDb(this.el.dirDb, store.data.directGain);
         if (this.el.dirMute) this.updateMuteBtn(this.el.dirMute, store.data.directMuted);
         if (this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
+        
+        if (this.el.dirBufferSlider) {
+            this.el.dirBufferSlider.value = store.data.directBuffer;
+            if (this.el.dirBufferVal) this.el.dirBufferVal.textContent = store.data.directBuffer.toFixed(2);
+        }
 
-        // Outputs
         store.data.outputs.forEach(outData => this.renderOutputStrip(outData));
 
         store.on('routing-changed', () => {
@@ -61,7 +58,6 @@ class UI {
                 if(container) this.renderRoutingContainer(container, 'hardware', i.id);
             });
             if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
-            
             audio.updateAllGains();
         });
 
@@ -69,7 +65,22 @@ class UI {
     }
 
     setupGlobalListeners() {
-        // Direct Strip Listeners
+        // --- ★追加: バックグラウンド省電力化ロジック ---
+        ipcRenderer.on('window-hide', () => {
+            console.log('Window hidden: Stopping UI loop');
+            this.isVisible = false; // ループ停止
+        });
+
+        ipcRenderer.on('window-show', () => {
+            console.log('Window shown: Resuming UI loop');
+            if (!this.isVisible) {
+                this.isVisible = true;
+                this.lastTime = performance.now(); // 時間リセット
+                this.startMeterLoop(); // ループ再開
+            }
+        });
+        // ------------------------------------------------
+
         this.el.dirFader?.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             store.data.directGain = val;
@@ -84,8 +95,14 @@ class UI {
             audio.updateAllGains();
             store.save();
         });
+        
+        this.el.dirBufferSlider?.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            store.data.directBuffer = val;
+            if (this.el.dirBufferVal) this.el.dirBufferVal.textContent = val.toFixed(2);
+        });
+        this.el.dirBufferSlider?.addEventListener('change', () => store.save());
 
-        // Global Buttons
         this.el.startBtn?.addEventListener('click', () => {
             if (audio.isRunning) {
                 audio.stop();
@@ -106,11 +123,9 @@ class UI {
              const muteAll = anyActive;
              store.data.outputs.forEach(o => o.isMuted = muteAll);
              store.save();
-             
              this.el.outputsContainer.innerHTML = '';
              store.data.outputs.forEach(o => this.renderOutputStrip(o));
              store.data.outputs.forEach(o => audio.updateStripParams(o.id));
-             
              ipcRenderer.send('mute-status-changed', muteAll);
         });
     }
@@ -120,7 +135,6 @@ class UI {
         const id = store.addInput();
         const newData = store.data.inputs.find(i => i.id === id);
         this.renderInputStrip(newData);
-        
         if (audio.isRunning) {
             audio.stop();
             audio.start();
@@ -133,9 +147,7 @@ class UI {
         const el = document.getElementById(`input-strip-${id}`);
         if (el) el.remove();
         this.meterValues.delete(`input-${id}-meter`);
-        
         store.removeInput(id);
-        
         if (audio.isRunning) {
             audio.stop();
             audio.start();
@@ -151,16 +163,13 @@ class UI {
             <div class="strip-header">IN ${data.id}</div>
             <button class="delete-strip-btn">×</button>
             <select class="device-select"></select>
-            
             <div class="route-container" id="input-${data.id}-route"></div>
-
             <div class="fader-group">
                 <div class="meter-container"><div class="meter-fill" id="input-${data.id}-meter"></div></div>
                 <input type="range" class="fader-main" orient="vertical" min="0" max="1.5" step="0.01" value="${data.volume}">
             </div>
             <div class="db-display">0.0dB</div>
         `;
-
         const sel = div.querySelector('.device-select');
         const routeCont = div.querySelector('.route-container');
         const fader = div.querySelector('.fader-main');
@@ -172,23 +181,17 @@ class UI {
         this.renderRoutingContainer(routeCont, 'hardware', data.id);
 
         delBtn.onclick = () => this.removeInput(data.id);
-
         sel.onchange = () => {
             data.deviceId = sel.value;
             store.save();
-            if (audio.isRunning) {
-                audio.stop();
-                audio.start();
-            }
+            if (audio.isRunning) { audio.stop(); audio.start(); }
         };
-
         fader.oninput = (e) => {
             data.volume = parseFloat(e.target.value);
             this.updateDb(dbDisp, data.volume);
             audio.updateAllGains();
         };
         fader.onchange = () => store.save();
-
         this.el.inputsContainer.appendChild(div);
     }
 
@@ -196,10 +199,8 @@ class UI {
     addNewOutput() {
         const id = store.addOutput();
         const newData = store.data.outputs.find(o => o.id === id);
-        
         store.data.inputs.forEach(inp => store.toggleRouting('hardware', inp.id, id));
         store.toggleRouting('direct', null, id);
-        
         this.renderOutputStrip(newData);
         
         store.data.inputs.forEach(i => {
@@ -207,7 +208,6 @@ class UI {
             if(c) this.renderRoutingContainer(c, 'hardware', i.id);
         });
         if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
-
         if (audio.isRunning) audio.createStripContext(newData);
     }
 
@@ -216,7 +216,6 @@ class UI {
         const el = document.getElementById(`strip-${id}`);
         if (el) el.remove();
         this.meterValues.delete(`strip-${id}-meter`);
-
         audio.removeStripContext(id);
         store.removeOutput(id);
         
@@ -248,7 +247,6 @@ class UI {
             <div class="db-display">0.0dB</div>
             <button class="btn-mute">Mute</button>
         `;
-        
         const sel = div.querySelector('.device-select');
         const fader = div.querySelector('.fader-main');
         const dbDisp = div.querySelector('.db-display');
@@ -261,7 +259,6 @@ class UI {
         this.populateOutputDeviceSelect(sel, data.selectedDeviceId);
 
         delBtn.onclick = () => this.removeOutput(data.id);
-        
         sel.onchange = () => {
             data.selectedDeviceId = sel.value;
             store.save();
@@ -287,11 +284,9 @@ class UI {
             };
             slider.onchange = () => store.save();
         });
-
         this.el.outputsContainer.appendChild(div);
     }
 
-    // --- Helpers ---
     async refreshDeviceList() {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -376,7 +371,6 @@ class UI {
         this.el.startBtn.style.backgroundColor = isActive ? "var(--accent-orange)" : "var(--accent-green)";
     }
 
-    // ★前回抜け落ちていたメソッドを復活させました★
     updateStatusDot(connected, rate) {
         if (!this.el.statusDot || !this.el.statusText) return;
         if (connected) {
@@ -393,6 +387,9 @@ class UI {
     // --- Visualization Loop ---
     startMeterLoop() {
         const loop = (timestamp) => {
+            // ★重要: ウィンドウ非表示時は即リターンしてループ停止（CPU節約）
+            if (!this.isVisible) return;
+
             let dt = (timestamp - this.lastTime) / 1000;
             this.lastTime = timestamp;
             if (dt > 0.1) dt = 0.1;
@@ -417,7 +414,7 @@ class UI {
                     else this.updateMeter(null, el, dt);
                 });
             } else {
-                // Decay all
+                // Engine停止中もアニメーション（残光）させる
                 store.data.inputs.forEach(i => {
                     const el = document.getElementById(`input-${i.id}-meter`);
                     this.updateMeter(null, el, dt);
