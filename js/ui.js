@@ -45,7 +45,7 @@ class UI {
     async init() {
         this.setupGlobalListeners();
         await this.refreshDeviceList();
-        store.load();
+        // store.load() は app.js で実行済みのため削除
 
         store.data.inputs.forEach(inData => this.renderInputStrip(inData));
 

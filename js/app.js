@@ -6,19 +6,19 @@ const ui = require('./js/ui');
 
 async function main() {
     console.log("Starting UX Audio Router...");
-    
+
     // 1. 設定読み込み
     store.load();
 
-    // 2. UI初期化
-    ui.init();
-    
+    // 2. UI初期化 (同期)
+    await ui.init();
+
     // 3. IPCサーバー起動（UI更新コールバックを設定）
     ipc.onStatusChange = (connected, rate) => {
         ui.updateStatusDot(connected, rate);
     };
     ipc.start();
-    
+
     // 4. オーディオエンジン自動スタート
     try {
         await audio.start();

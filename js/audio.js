@@ -16,6 +16,7 @@ class RingBuffer {
     }
 
     push(floatArray, inputChannels) {
+        if (!inputChannels) inputChannels = this.channels; // Guard
         const samplesPerCh = floatArray.length / inputChannels;
         const copyCh = Math.min(this.channels, inputChannels);
 
@@ -71,11 +72,14 @@ class AudioEngine {
 
         try {
             for (const inputData of store.data.inputs) {
+                if (!this.isRunning) return; // 中断ガード
                 await this.setupHardwareInput(inputData);
             }
             for (const outData of store.data.outputs) {
+                if (!this.isRunning) return; // 中断ガード
                 await this.createStripContext(outData);
             }
+            if (!this.isRunning) return;
             this.updateAllGains();
             this.schedulerInterval = setInterval(() => this.scheduleAudio(), 20);
 
@@ -316,7 +320,7 @@ class AudioEngine {
         }
     }
 
-    processDirectAudio(floatArray, sampleRate, channels) {
+    processDirectAudio(floatArray, sampleRate, channels = 2) {
         if (!this.isRunning) return;
         this.ringBuffer.push(floatArray, channels);
     }

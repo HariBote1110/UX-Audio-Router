@@ -75,17 +75,19 @@ class DirectServer {
     }
 
     handleAudioData(buffer) {
-        // 8バイト整列
+        // 8バイト整列 (L+R float)
         if (buffer.length % 8 !== 0) {
             const alignedLen = Math.floor(buffer.length / 8) * 8;
             buffer = buffer.slice(0, alignedLen);
         }
         if (buffer.length === 0) return;
 
-        const floatArray = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+        // メメモリアライメントの安全な確保 (Buffer.buffer が 4バイト境界でない場合への対策)
+        const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        const floatArray = new Float32Array(arrayBuffer);
 
-        // AudioEngineへ処理を委譲
-        audio.processDirectAudio(floatArray, this.sampleRate);
+        // AudioEngineへ処理を委譲（チャンネル数を明示）
+        audio.processDirectAudio(floatArray, this.sampleRate, 2);
     }
 
     reportStatus(connected, rate) {
