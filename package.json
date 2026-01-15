@@ -1,6 +1,6 @@
 {
   "name": "ux-audio-router",
-  "version": "1.0.0",
+  "version": "1.0.1-Beta-1a",
   "description": "UX Audio Router",
   "main": "main.js",
   "scripts": {

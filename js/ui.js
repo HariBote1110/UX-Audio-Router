@@ -347,6 +347,27 @@ class UI {
             this.inputDevices = devices.filter(d => d.kind === 'audioinput');
             this.outputDevices = devices.filter(d => d.kind === 'audiooutput');
 
+            // --- Auto-Reconnect Check ---
+            let shouldRestartAudio = false;
+
+            // 1. Check Input Devices
+            if (audio.isRunning) {
+                store.data.inputs.forEach(input => {
+                    // Check if this input is configured but missing in the engine
+                    const currentHw = audio.hardwareInputs.get(input.id);
+                    const isMissingInEngine = !currentHw || !currentHw.stream || !currentHw.stream.active;
+                    
+                    // Check if the configured device ID is actually present now
+                    const isAvailable = this.inputDevices.some(d => d.deviceId === input.deviceId);
+
+                    if (isMissingInEngine && isAvailable) {
+                        console.log(`Input device ${input.deviceId} reconnected. Restarting audio.`);
+                        shouldRestartAudio = true;
+                    }
+                });
+            }
+
+            // 2. Refresh UI Selects
             const inputSelects = document.querySelectorAll('.input-strip .device-select');
             inputSelects.forEach(sel => {
                 const stripId = parseInt(sel.closest('.strip').id.replace('input-strip-', ''));
@@ -360,6 +381,26 @@ class UI {
                 const data = store.data.outputs.find(o => o.id === stripId);
                 this.populateOutputDeviceSelect(sel, data ? data.selectedDeviceId : '');
             });
+
+            // 3. Audio Engine Action
+            if (shouldRestartAudio) {
+                audio.stop();
+                await audio.start(); 
+                this.updateStartBtn(true);
+            } else if (audio.isRunning) {
+                // Determine if any output devices need re-hooking
+                store.data.outputs.forEach(out => {
+                    const nodes = audio.strips.get(out.id);
+                    const isAvailable = this.outputDevices.some(d => d.deviceId === out.selectedDeviceId);
+                    // If the device is present but maybe not correctly attached? 
+                    // Note: WebAudio often handles output device loss gracefully, but explicit setSinkId can help on reconnect.
+                    if (isAvailable && out.selectedDeviceId) {
+                        // Re-apply sink ID just in case it was lost
+                        audio.setStripDevice(out.id, out.selectedDeviceId);
+                    }
+                });
+            }
+
         } catch (e) { console.error(e); }
     }
 
