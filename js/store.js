@@ -9,7 +9,7 @@ class Store extends EventEmitter {
             directGain: 1.0,
             directMuted: false,
             directRouting: [],
-            directBuffer: 0.1, // デフォルト 0.1秒
+            directBuffer: 0.1,
             outputs: []
         };
         
@@ -17,20 +17,19 @@ class Store extends EventEmitter {
         this.directRoutingSet = new Set();
         this.inputIdCounter = 1;
         this.outputIdCounter = 1;
+        
+        // 10バンドEQの中心周波数 (固定)
+        this.eqFrequencies = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
     }
 
     load() {
         try {
             const saved = JSON.parse(localStorage.getItem('uxAudioRouterSettings'));
             if (saved) {
-                // Migration logic
                 if (saved.inputs) {
                     this.data.inputs = saved.inputs;
-                    if (this.data.inputs.length > 0) {
-                        this.inputIdCounter = Math.max(...this.data.inputs.map(i => i.id)) + 1;
-                    }
+                    if (this.data.inputs.length > 0) this.inputIdCounter = Math.max(...this.data.inputs.map(i => i.id)) + 1;
                 } else if (saved.hardwareGain !== undefined) {
-                     // Old format migration
                      const oldRouting = new Set(saved.hardwareRouting || []);
                      this.data.inputs = [{
                         id: 1, deviceId: saved.inputDeviceId || 'default', volume: saved.hardwareGain || 1.0, isMuted: false, routing: Array.from(oldRouting)
@@ -47,9 +46,20 @@ class Store extends EventEmitter {
                 this.directRoutingSet = new Set(saved.directRouting || []);
 
                 this.data.outputs = saved.outputs || [];
+                
+                // ★追加: データ移行 (10-Band Graphic EQへ)
                 if (this.data.outputs) {
                     this.data.outputs.forEach(out => {
-                        if (!out.eqValues) out.eqValues = out.eq || { high: 0, mid: 0, low: 0 };
+                        if (out.delayMs === undefined) out.delayMs = 0;
+                        if (!out.compressor) {
+                            out.compressor = { enabled: false, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 };
+                        }
+
+                        // 古いEQデータがある場合はリセットして10バンド配列を作成
+                        // (構造が全く違うため、下手に変換するよりフラットにする方が安全)
+                        if (!out.eqGains || out.eqGains.length !== 10) {
+                            out.eqGains = new Array(10).fill(0); // [0,0,0,0,0,0,0,0,0,0]
+                        }
                     });
                     if (this.data.outputs.length > 0) {
                         this.outputIdCounter = Math.max(...this.data.outputs.map(o => o.id)) + 1;
@@ -77,7 +87,11 @@ class Store extends EventEmitter {
             directMuted: this.data.directMuted,
             directRouting: Array.from(this.directRoutingSet),
             directBuffer: this.data.directBuffer,
-            outputs: this.data.outputs.map(out => ({ ...out, eq: out.eqValues }))
+            outputs: this.data.outputs.map(out => ({ 
+                ...out, 
+                // 保存するのはGain配列のみ
+                eqGains: out.eqGains
+            }))
         };
         localStorage.setItem('uxAudioRouterSettings', JSON.stringify(saveData));
     }
@@ -102,7 +116,16 @@ class Store extends EventEmitter {
     // --- Output Management ---
     addOutput() {
         const id = this.getAvailableId(this.data.outputs);
-        this.data.outputs.push({ id: id, selectedDeviceId: '', volume: 1.0, isMuted: false, eqValues: { high: 0, mid: 0, low: 0 } });
+        this.data.outputs.push({ 
+            id: id, 
+            selectedDeviceId: '', 
+            volume: 1.0, 
+            isMuted: false, 
+            delayMs: 0,
+            compressor: { enabled: false, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 },
+            // 10バンド初期値 (ALL 0dB)
+            eqGains: new Array(10).fill(0)
+        });
         this.data.outputs.sort((a, b) => a.id - b.id);
         this.save();
         return id;
