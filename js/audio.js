@@ -12,7 +12,7 @@ class RingBuffer {
         }
         this.writePtr = 0;
         this.readPtr = 0;
-        this.available = 0; 
+        this.available = 0;
     }
 
     push(floatArray, inputChannels) {
@@ -24,7 +24,7 @@ class RingBuffer {
                 this.buffers[ch][this.writePtr] = floatArray[i * inputChannels + ch];
             }
             this.writePtr = (this.writePtr + 1) % this.size;
-            
+
             if (this.available < this.size) {
                 this.available++;
             } else {
@@ -45,7 +45,7 @@ class RingBuffer {
         this.available -= count;
         return true;
     }
-    
+
     clear() {
         this.readPtr = 0;
         this.writePtr = 0;
@@ -57,9 +57,10 @@ class AudioEngine {
     constructor() {
         this.hardwareInputs = new Map();
         this.isRunning = false;
-        this.directAnalyser = null;
+        this.directAnalyserL = null;
+        this.directAnalyserR = null;
         this.strips = new Map();
-        this.ringBuffer = new RingBuffer(48000 * 2, 2); 
+        this.ringBuffer = new RingBuffer(48000 * 2, 2);
         this.schedulerInterval = null;
     }
 
@@ -86,7 +87,7 @@ class AudioEngine {
 
     stop() {
         if (!this.isRunning) return;
-        
+
         if (this.schedulerInterval) {
             clearInterval(this.schedulerInterval);
             this.schedulerInterval = null;
@@ -96,13 +97,14 @@ class AudioEngine {
             if (strip.context) strip.context.close();
         });
         this.strips.clear();
-        
+
         this.hardwareInputs.forEach(hw => {
             if (hw.stream) hw.stream.getTracks().forEach(t => t.stop());
         });
         this.hardwareInputs.clear();
-        
-        this.directAnalyser = null;
+
+        this.directAnalyserL = null;
+        this.directAnalyserR = null;
         this.isRunning = false;
     }
 
@@ -118,7 +120,8 @@ class AudioEngine {
             });
             this.hardwareInputs.set(inputData.id, {
                 stream: stream,
-                analyser: null 
+                analyserL: null,
+                analyserR: null
             });
         } catch (e) {
             console.warn(`Failed to open input ${inputData.id}:`, e);
@@ -131,21 +134,31 @@ class AudioEngine {
         });
 
         if (outputData.selectedDeviceId && typeof ctx.setSinkId === 'function') {
-            try { await ctx.setSinkId(outputData.selectedDeviceId); } catch(e){}
+            try { await ctx.setSinkId(outputData.selectedDeviceId); } catch (e) { }
         }
 
-        const hardwareMixBus = ctx.createGain(); 
-        const hwInputGains = new Map(); 
+        const hardwareMixBus = ctx.createGain();
+        const hwInputGains = new Map();
 
         this.hardwareInputs.forEach((hw, inputId) => {
             const source = ctx.createMediaStreamSource(hw.stream);
-            if (!hw.analyser || hw.analyser.context.state === 'closed') {
-                hw.analyser = ctx.createAnalyser();
-                hw.analyser.fftSize = 2048;
-                source.connect(hw.analyser);
+
+            // Create Stereo Analysers for this input if not exists
+            if (!hw.analyserL || hw.analyserL.context.state === 'closed') {
+                const splitter = ctx.createChannelSplitter(2);
+                source.connect(splitter);
+
+                hw.analyserL = ctx.createAnalyser();
+                hw.analyserL.fftSize = 2048;
+                splitter.connect(hw.analyserL, 0);
+
+                hw.analyserR = ctx.createAnalyser();
+                hw.analyserR.fftSize = 2048;
+                splitter.connect(hw.analyserR, 1);
             }
+
             const gain = ctx.createGain();
-            gain.gain.value = 0; 
+            gain.gain.value = 0;
             source.connect(gain);
             gain.connect(hardwareMixBus);
             hwInputGains.set(inputId, gain);
@@ -154,18 +167,25 @@ class AudioEngine {
         const directGain = ctx.createGain();
         directGain.gain.value = 0;
 
-        if (!this.directAnalyser || this.directAnalyser.context.state === 'closed') {
-            this.directAnalyser = ctx.createAnalyser();
-            this.directAnalyser.fftSize = 2048;
-            directGain.connect(this.directAnalyser);
+        if (!this.directAnalyserL || this.directAnalyserL.context.state === 'closed') {
+            const dSplitter = ctx.createChannelSplitter(2);
+            directGain.connect(dSplitter);
+
+            this.directAnalyserL = ctx.createAnalyser();
+            this.directAnalyserL.fftSize = 2048;
+            dSplitter.connect(this.directAnalyserL, 0);
+
+            this.directAnalyserR = ctx.createAnalyser();
+            this.directAnalyserR.fftSize = 2048;
+            dSplitter.connect(this.directAnalyserR, 1);
         }
 
         // --- Effects Chain ---
-        
+
         // 1. 10-Band Graphic EQ (31Hz ~ 16kHz)
         const eqNodes = [];
         const gains = outputData.eqGains || new Array(10).fill(0);
-        
+
         store.eqFrequencies.forEach((freq, i) => {
             const filter = ctx.createBiquadFilter();
             filter.type = 'peaking';
@@ -180,32 +200,40 @@ class AudioEngine {
         this.applyCompressorSettings(compressor, outputData.compressor);
 
         // 3. Delay
-        const delayNode = ctx.createDelay(1.0); 
+        const delayNode = ctx.createDelay(1.0);
         delayNode.delayTime.value = (outputData.delayMs || 0) / 1000;
 
         // 4. Master
         const masterVol = ctx.createGain();
         masterVol.gain.value = outputData.isMuted ? 0 : outputData.volume;
-        const outAnalyser = ctx.createAnalyser();
-        outAnalyser.fftSize = 2048;
+
+        const outSplitter = ctx.createChannelSplitter(2);
+        const outAnalyserL = ctx.createAnalyser();
+        outAnalyserL.fftSize = 2048;
+        const outAnalyserR = ctx.createAnalyser();
+        outAnalyserR.fftSize = 2048;
 
         // --- Connections ---
         // Inputs -> EQ[0] -> ... -> EQ[9] -> Compressor -> Delay -> Master
-        
+
         hardwareMixBus.connect(eqNodes[0]);
         directGain.connect(eqNodes[0]);
 
         // Chain EQ nodes
         for (let i = 0; i < eqNodes.length - 1; i++) {
-            eqNodes[i].connect(eqNodes[i+1]);
+            eqNodes[i].connect(eqNodes[i + 1]);
         }
-        
+
         const eqLast = eqNodes[eqNodes.length - 1];
         eqLast.connect(compressor);
         compressor.connect(delayNode);
         delayNode.connect(masterVol);
-        masterVol.connect(outAnalyser);
-        outAnalyser.connect(ctx.destination);
+
+        masterVol.connect(outSplitter);
+        outSplitter.connect(outAnalyserL, 0);
+        outSplitter.connect(outAnalyserR, 1);
+
+        masterVol.connect(ctx.destination);
 
         this.strips.set(outputData.id, {
             context: ctx,
@@ -215,7 +243,8 @@ class AudioEngine {
             eqNodes: eqNodes, // Array of BiquadFilterNode
             compressor: compressor,
             delayNode: delayNode,
-            analyser: outAnalyser,
+            analyserL: outAnalyserL,
+            analyserR: outAnalyserR,
             nextAudioTime: 0
         });
     }
@@ -223,7 +252,7 @@ class AudioEngine {
     applyCompressorSettings(node, settings) {
         if (!settings || !settings.enabled) {
             node.threshold.value = 0;
-            node.ratio.value = 1; 
+            node.ratio.value = 1;
         } else {
             node.threshold.value = settings.threshold;
             node.ratio.value = settings.ratio;
@@ -282,7 +311,7 @@ class AudioEngine {
     async setStripDevice(id, deviceId) {
         const nodes = this.strips.get(id);
         if (nodes && nodes.context && typeof nodes.context.setSinkId === 'function') {
-            try { await nodes.context.setSinkId(deviceId); } catch(e){}
+            try { await nodes.context.setSinkId(deviceId); } catch (e) { }
         }
     }
 
@@ -300,13 +329,13 @@ class AudioEngine {
         while (this.ringBuffer.available >= CHUNK_SIZE) {
             const tempBuffers = [new Float32Array(CHUNK_SIZE), new Float32Array(CHUNK_SIZE)];
             this.ringBuffer.pop(tempBuffers, CHUNK_SIZE);
-            
+
             this.strips.forEach((nodes) => {
                 const ctx = nodes.context;
-                
+
                 if (nodes.nextAudioTime < ctx.currentTime) {
                     nodes.nextAudioTime = ctx.currentTime + userBufferSec;
-                    if (store.data.directBuffer < 0.5) store.data.directBuffer += 0.001; 
+                    if (store.data.directBuffer < 0.5) store.data.directBuffer += 0.001;
                 }
 
                 const buffer = ctx.createBuffer(2, CHUNK_SIZE, 48000);
@@ -317,7 +346,7 @@ class AudioEngine {
                 src.buffer = buffer;
                 src.connect(nodes.directGain);
                 src.start(nodes.nextAudioTime);
-                
+
                 nodes.nextAudioTime += buffer.duration;
             });
         }

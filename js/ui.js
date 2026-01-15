@@ -18,10 +18,11 @@ class UI {
             dirFader: document.getElementById('directGainFader'),
             dirDb: document.getElementById('directDbDisplay'),
             dirMute: document.getElementById('directMuteBtn'),
-            dirMeter: document.getElementById('directMeter'),
+            dirMeterL: document.getElementById('directMeterL'),
+            dirMeterR: document.getElementById('directMeterR'),
             dirBufferSlider: document.getElementById('directBufferSlider'),
             dirBufferVal: document.getElementById('directBufferVal'),
-            
+
             // Modal Elements
             eqModalOverlay: document.getElementById('eqModalOverlay'),
             eqModalTitle: document.getElementById('eqModalTitle'),
@@ -42,11 +43,11 @@ class UI {
 
     async init() {
         this.setupGlobalListeners();
-        await this.refreshDeviceList(); 
-        store.load(); 
-        
+        await this.refreshDeviceList();
+        store.load();
+
         store.data.inputs.forEach(inData => this.renderInputStrip(inData));
-        
+
         if (this.el.dirFader) this.el.dirFader.value = store.data.directGain;
         if (this.el.dirDb) this.updateDb(this.el.dirDb, store.data.directGain);
         if (this.el.dirMute) this.updateMuteBtn(this.el.dirMute, store.data.directMuted);
@@ -61,9 +62,9 @@ class UI {
         store.on('routing-changed', () => {
             store.data.inputs.forEach(i => {
                 const container = document.getElementById(`input-${i.id}-route`);
-                if(container) this.renderRoutingContainer(container, 'hardware', i.id);
+                if (container) this.renderRoutingContainer(container, 'hardware', i.id);
             });
-            if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
+            if (this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
             audio.updateAllGains();
         });
 
@@ -94,7 +95,7 @@ class UI {
             audio.updateAllGains();
             store.save();
         });
-        
+
         this.el.dirBufferSlider?.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             store.data.directBuffer = val;
@@ -112,14 +113,14 @@ class UI {
         navigator.mediaDevices.ondevicechange = () => this.refreshDeviceList();
 
         ipcRenderer.on('toggle-global-mute', (event, newState) => {
-             const anyActive = store.data.outputs.some(o => !o.isMuted);
-             const muteAll = anyActive;
-             store.data.outputs.forEach(o => o.isMuted = muteAll);
-             store.save();
-             this.el.outputsContainer.innerHTML = '';
-             store.data.outputs.forEach(o => this.renderOutputStrip(o));
-             store.data.outputs.forEach(o => audio.updateStripParams(o.id));
-             ipcRenderer.send('mute-status-changed', muteAll);
+            const anyActive = store.data.outputs.some(o => !o.isMuted);
+            const muteAll = anyActive;
+            store.data.outputs.forEach(o => o.isMuted = muteAll);
+            store.save();
+            this.el.outputsContainer.innerHTML = '';
+            store.data.outputs.forEach(o => this.renderOutputStrip(o));
+            store.data.outputs.forEach(o => audio.updateStripParams(o.id));
+            ipcRenderer.send('mute-status-changed', muteAll);
         });
 
         // --- Modal Events ---
@@ -165,7 +166,10 @@ class UI {
             <select class="device-select"></select>
             <div class="route-container" id="input-${data.id}-route"></div>
             <div class="fader-group">
-                <div class="meter-container"><div class="meter-fill" id="input-${data.id}-meter"></div></div>
+                <div class="meter-container-stereo">
+                    <div class="meter-container"><div class="meter-fill" id="input-${data.id}-meterL"></div></div>
+                    <div class="meter-container"><div class="meter-fill" id="input-${data.id}-meterR"></div></div>
+                </div>
                 <input type="range" class="fader-main" orient="vertical" min="0" max="1.5" step="0.01" value="${data.volume}">
             </div>
             <div class="db-display">0.0dB</div>
@@ -194,12 +198,12 @@ class UI {
         store.data.inputs.forEach(inp => store.toggleRouting('hardware', inp.id, id));
         store.toggleRouting('direct', null, id);
         this.renderOutputStrip(newData);
-        
+
         store.data.inputs.forEach(i => {
             const c = document.getElementById(`input-${i.id}-route`);
-            if(c) this.renderRoutingContainer(c, 'hardware', i.id);
+            if (c) this.renderRoutingContainer(c, 'hardware', i.id);
         });
-        if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
+        if (this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
         if (audio.isRunning) audio.createStripContext(newData);
     }
 
@@ -210,12 +214,12 @@ class UI {
         this.meterValues.delete(`strip-${id}-meter`);
         audio.removeStripContext(id);
         store.removeOutput(id);
-        
+
         store.data.inputs.forEach(i => {
             const c = document.getElementById(`input-${i.id}-route`);
-            if(c) this.renderRoutingContainer(c, 'hardware', i.id);
+            if (c) this.renderRoutingContainer(c, 'hardware', i.id);
         });
-        if(this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
+        if (this.el.dirRoute) this.renderRoutingContainer(this.el.dirRoute, 'direct', null);
     }
 
     renderOutputStrip(data) {
@@ -242,20 +246,23 @@ class UI {
             </div>
 
             <div class="fader-group">
-                <div class="meter-container"><div class="meter-fill" id="strip-${data.id}-meter"></div></div>
+                <div class="meter-container-stereo">
+                    <div class="meter-container"><div class="meter-fill" id="strip-${data.id}-meterL"></div></div>
+                    <div class="meter-container"><div class="meter-fill" id="strip-${data.id}-meterR"></div></div>
+                </div>
                 <input type="range" class="fader-main" orient="vertical" min="0" max="1.5" step="0.01" value="${data.volume}">
             </div>
             <div class="db-display">0.0dB</div>
             <button class="btn-mute">Mute</button>
         `;
-        
+
         const sel = div.querySelector('.device-select');
         const fader = div.querySelector('.fader-main');
         const dbDisp = div.querySelector('.db-display');
         const muteBtn = div.querySelector('.btn-mute');
         const delBtn = div.querySelector('.delete-strip-btn');
         const eqBtn = div.querySelector('.eq-open-btn');
-        
+
         const delayInput = div.querySelector('.delay-input');
         const compBtn = div.querySelector('.comp-btn');
         const compThresh = div.querySelector('.comp-thresh');
@@ -263,7 +270,7 @@ class UI {
         this.updateDb(dbDisp, data.volume);
         this.updateMuteBtn(muteBtn, data.isMuted);
         this.populateOutputDeviceSelect(sel, data.selectedDeviceId);
-        
+
         eqBtn.onclick = () => this.openEqModal(data.id);
 
         delBtn.onclick = () => this.removeOutput(data.id);
@@ -273,17 +280,17 @@ class UI {
         muteBtn.onclick = () => { data.isMuted = !data.isMuted; this.updateMuteBtn(muteBtn, data.isMuted); audio.updateStripParams(data.id); store.save(); };
 
         delayInput.onchange = (e) => {
-            let val = parseInt(e.target.value); if(val<0) val=0;
+            let val = parseInt(e.target.value); if (val < 0) val = 0;
             data.delayMs = val; audio.updateStripParams(data.id); store.save();
         };
         compBtn.onclick = () => {
-            if(!data.compressor) data.compressor = { enabled: false, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 };
+            if (!data.compressor) data.compressor = { enabled: false, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 };
             data.compressor.enabled = !data.compressor.enabled;
             compBtn.classList.toggle('active', data.compressor.enabled);
             audio.updateStripParams(data.id); store.save();
         };
         compThresh.oninput = (e) => {
-            if(!data.compressor) data.compressor = { enabled: true, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 };
+            if (!data.compressor) data.compressor = { enabled: true, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 };
             data.compressor.threshold = parseFloat(e.target.value);
             audio.updateStripParams(data.id);
         };
@@ -311,10 +318,10 @@ class UI {
     renderEqModalContent(data) {
         this.el.eqSlidersContainer.innerHTML = '';
         const freqs = store.eqFrequencies;
-        
+
         freqs.forEach((freq, i) => {
             const val = data.eqGains[i] || 0;
-            const label = freq >= 1000 ? `${freq/1000}K` : freq;
+            const label = freq >= 1000 ? `${freq / 1000}K` : freq;
 
             const col = document.createElement('div');
             col.className = 'eq-band-col';
@@ -323,7 +330,7 @@ class UI {
                 <input type="range" class="eq-fader" orient="vertical" min="-15" max="15" step="0.1" value="${val}">
                 <div class="eq-freq-label">${label}</div>
             `;
-            
+
             const fader = col.querySelector('.eq-fader');
             const valDisp = col.querySelector('.eq-val-label');
 
@@ -331,7 +338,7 @@ class UI {
                 const newVal = parseFloat(e.target.value);
                 data.eqGains[i] = newVal;
                 valDisp.textContent = `${newVal > 0 ? '+' : ''}${newVal.toFixed(1)}`;
-                
+
                 audio.updateStripParams(data.id);
             };
             fader.onchange = () => store.save();
@@ -356,7 +363,7 @@ class UI {
                     // Check if this input is configured but missing in the engine
                     const currentHw = audio.hardwareInputs.get(input.id);
                     const isMissingInEngine = !currentHw || !currentHw.stream || !currentHw.stream.active;
-                    
+
                     // Check if the configured device ID is actually present now
                     const isAvailable = this.inputDevices.some(d => d.deviceId === input.deviceId);
 
@@ -385,7 +392,7 @@ class UI {
             // 3. Audio Engine Action
             if (shouldRestartAudio) {
                 audio.stop();
-                await audio.start(); 
+                await audio.start();
                 this.updateStartBtn(true);
             } else if (audio.isRunning) {
                 // Determine if any output devices need re-hooking
@@ -410,7 +417,7 @@ class UI {
         this.inputDevices.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d.deviceId;
-            opt.text = d.label || `Input ${d.deviceId.slice(0,4)}`;
+            opt.text = d.label || `Input ${d.deviceId.slice(0, 4)}`;
             if (d.label.includes('BlackHole')) opt.selected = true;
             select.appendChild(opt);
         });
@@ -423,7 +430,7 @@ class UI {
         this.outputDevices.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d.deviceId;
-            opt.text = d.label || `Output ${d.deviceId.slice(0,4)}`;
+            opt.text = d.label || `Output ${d.deviceId.slice(0, 4)}`;
             select.appendChild(opt);
         });
         if (currentVal) select.value = currentVal;
@@ -483,26 +490,36 @@ class UI {
             if (audio.isRunning) {
                 store.data.inputs.forEach(input => {
                     const hw = audio.hardwareInputs.get(input.id);
-                    const el = document.getElementById(`input-${input.id}-meter`);
-                    if (hw && hw.analyser && el) this.updateMeter(hw.analyser, el, dt);
-                    else if (el) this.updateMeter(null, el, dt);
+                    const elL = document.getElementById(`input-${input.id}-meterL`);
+                    const elR = document.getElementById(`input-${input.id}-meterR`);
+                    if (hw && hw.analyserL && elL) this.updateMeter(hw.analyserL, elL, dt);
+                    else if (elL) this.updateMeter(null, elL, dt);
+                    if (hw && hw.analyserR && elR) this.updateMeter(hw.analyserR, elR, dt);
+                    else if (elR) this.updateMeter(null, elR, dt);
                 });
-                this.updateMeter(audio.directAnalyser, this.el.dirMeter, dt);
+
+                this.updateMeter(audio.directAnalyserL, this.el.dirMeterL, dt);
+                this.updateMeter(audio.directAnalyserR, this.el.dirMeterR, dt);
+
                 store.data.outputs.forEach(outData => {
                     const nodes = audio.strips.get(outData.id);
-                    const el = document.getElementById(`strip-${outData.id}-meter`);
-                    if (nodes && nodes.analyser) this.updateMeter(nodes.analyser, el, dt);
-                    else this.updateMeter(null, el, dt);
+                    const elL = document.getElementById(`strip-${outData.id}-meterL`);
+                    const elR = document.getElementById(`strip-${outData.id}-meterR`);
+                    if (nodes && nodes.analyserL && elL) this.updateMeter(nodes.analyserL, elL, dt);
+                    else if (elL) this.updateMeter(null, elL, dt);
+                    if (nodes && nodes.analyserR && elR) this.updateMeter(nodes.analyserR, elR, dt);
+                    else if (elR) this.updateMeter(null, elR, dt);
                 });
             } else {
                 store.data.inputs.forEach(i => {
-                    const el = document.getElementById(`input-${i.id}-meter`);
-                    this.updateMeter(null, el, dt);
+                    this.updateMeter(null, document.getElementById(`input-${i.id}-meterL`), dt);
+                    this.updateMeter(null, document.getElementById(`input-${i.id}-meterR`), dt);
                 });
-                this.updateMeter(null, this.el.dirMeter, dt);
+                this.updateMeter(null, this.el.dirMeterL, dt);
+                this.updateMeter(null, this.el.dirMeterR, dt);
                 store.data.outputs.forEach(outData => {
-                    const el = document.getElementById(`strip-${outData.id}-meter`);
-                    this.updateMeter(null, el, dt);
+                    this.updateMeter(null, document.getElementById(`strip-${outData.id}-meterL`), dt);
+                    this.updateMeter(null, document.getElementById(`strip-${outData.id}-meterR`), dt);
                 });
             }
             requestAnimationFrame(loop);
@@ -526,7 +543,7 @@ class UI {
             targetPercent = (db + 60) / 60 * 100;
             if (targetPercent < 0) targetPercent = 0;
             if (targetPercent > 100) targetPercent = 100;
-            if (targetPercent < 5.0) targetPercent = 0; 
+            if (targetPercent < 5.0) targetPercent = 0;
         }
 
         const id = element.id;
