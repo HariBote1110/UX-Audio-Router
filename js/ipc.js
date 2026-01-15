@@ -10,16 +10,16 @@ class DirectServer {
         this.isHeaderReceived = false;
         this.headerBuffer = Buffer.alloc(0);
         this.sampleRate = 44100;
-        
+
         // ステータス変更時のコールバック
-        this.onStatusChange = null; 
+        this.onStatusChange = null;
     }
 
     start() {
         const isWin = process.platform === 'win32';
         const SOCKET_PATH = isWin ? '\\\\.\\pipe\\ux_audio_router_pipe' : '/tmp/ux_audio_router.sock';
 
-        if (!isWin && fs.existsSync(SOCKET_PATH)) { try { fs.unlinkSync(SOCKET_PATH); } catch(e) {} }
+        if (!isWin && fs.existsSync(SOCKET_PATH)) { try { fs.unlinkSync(SOCKET_PATH); } catch (e) { } }
 
         this.server = net.createServer((socket) => {
             console.log('UX Music Connected');
@@ -54,6 +54,8 @@ class DirectServer {
 
     handleHandshake(buffer, socket) {
         this.headerBuffer = Buffer.concat([this.headerBuffer, buffer]);
+        if (this.headerBuffer.length > 1024) this.headerBuffer = this.headerBuffer.slice(-1024); // Limit memory usage
+
         if (this.headerBuffer.length >= 8) {
             const magic = this.headerBuffer.slice(0, 4).toString();
             if (magic === 'UXD1') {
@@ -61,7 +63,7 @@ class DirectServer {
                 console.log(`Handshake OK. Rate: ${this.sampleRate}Hz`);
                 this.isHeaderReceived = true;
                 this.reportStatus(true, this.sampleRate);
-                
+
                 const remaining = this.headerBuffer.slice(8);
                 if (remaining.length > 0) this.handleAudioData(remaining);
             } else {
@@ -81,7 +83,7 @@ class DirectServer {
         if (buffer.length === 0) return;
 
         const floatArray = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
-        
+
         // AudioEngineへ処理を委譲
         audio.processDirectAudio(floatArray, this.sampleRate);
     }

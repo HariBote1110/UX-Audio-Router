@@ -62,6 +62,7 @@ class AudioEngine {
         this.strips = new Map();
         this.ringBuffer = new RingBuffer(48000 * 2, 2);
         this.schedulerInterval = null;
+        this.tempBuffers = [new Float32Array(1024), new Float32Array(1024)];
     }
 
     async start() {
@@ -327,8 +328,7 @@ class AudioEngine {
         const userBufferSec = Math.max(store.data.directBuffer || 0.1, 0.05);
 
         while (this.ringBuffer.available >= CHUNK_SIZE) {
-            const tempBuffers = [new Float32Array(CHUNK_SIZE), new Float32Array(CHUNK_SIZE)];
-            this.ringBuffer.pop(tempBuffers, CHUNK_SIZE);
+            this.ringBuffer.pop(this.tempBuffers, CHUNK_SIZE);
 
             this.strips.forEach((nodes) => {
                 const ctx = nodes.context;
@@ -339,8 +339,8 @@ class AudioEngine {
                 }
 
                 const buffer = ctx.createBuffer(2, CHUNK_SIZE, 48000);
-                buffer.copyToChannel(tempBuffers[0], 0);
-                buffer.copyToChannel(tempBuffers[1], 1);
+                buffer.copyToChannel(this.tempBuffers[0], 0);
+                buffer.copyToChannel(this.tempBuffers[1], 1);
 
                 const src = ctx.createBufferSource();
                 src.buffer = buffer;

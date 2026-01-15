@@ -38,7 +38,8 @@ class UI {
         this.outputDevices = [];
         this.isVisible = true;
 
-        this.currentEqOutputId = null; // 現在モーダルで編集中のOutput ID
+        this.currentEqOutputId = null;
+        this.isMeterLoopRunning = false;
     }
 
     async init() {
@@ -72,6 +73,10 @@ class UI {
     }
 
     setupGlobalListeners() {
+        ipcRenderer.removeAllListeners('window-hide');
+        ipcRenderer.removeAllListeners('window-show');
+        ipcRenderer.removeAllListeners('toggle-global-mute');
+
         ipcRenderer.on('window-hide', () => { this.isVisible = false; });
         ipcRenderer.on('window-show', () => {
             if (!this.isVisible) {
@@ -151,7 +156,8 @@ class UI {
         if (!confirm('Remove input?')) return;
         const el = document.getElementById(`input-strip-${id}`);
         if (el) el.remove();
-        this.meterValues.delete(`input-${id}-meter`);
+        this.meterValues.delete(`input-${id}-meterL`);
+        this.meterValues.delete(`input-${id}-meterR`);
         store.removeInput(id);
         if (audio.isRunning) { audio.stop(); audio.start(); this.updateStartBtn(true); }
     }
@@ -211,7 +217,8 @@ class UI {
         if (!confirm('Remove output?')) return;
         const el = document.getElementById(`strip-${id}`);
         if (el) el.remove();
-        this.meterValues.delete(`strip-${id}-meter`);
+        this.meterValues.delete(`strip-${id}-meterL`);
+        this.meterValues.delete(`strip-${id}-meterR`);
         audio.removeStripContext(id);
         store.removeOutput(id);
 
@@ -481,8 +488,14 @@ class UI {
     }
 
     startMeterLoop() {
+        if (this.isMeterLoopRunning) return;
+        this.isMeterLoopRunning = true;
+
         const loop = (timestamp) => {
-            if (!this.isVisible) return;
+            if (!this.isVisible) {
+                this.isMeterLoopRunning = false;
+                return;
+            }
             let dt = (timestamp - this.lastTime) / 1000;
             this.lastTime = timestamp;
             if (dt > 0.1) dt = 0.1;
@@ -556,7 +569,8 @@ class UI {
         if (current < 0) current = 0;
         if (current > 100) current = 100;
         this.meterValues.set(id, current);
-        element.style.height = `${current}%`;
+        // シャッター方式: 0%のとき100%隠し、100%のとき0%隠す
+        element.style.height = `${100 - current}%`;
     }
 }
 
